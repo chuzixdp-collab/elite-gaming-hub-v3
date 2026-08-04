@@ -1,0 +1,391 @@
+// Elite Gaming Hub — Prisma Schema
+// Provider is environment-driven so the SAME schema runs on:
+//   - Local sandbox: DATABASE_PROVIDER=sqlite  DATABASE_URL=file:/home/z/my-project/db/custom.db
+//   - Neon (Netlify prod): DATABASE_PROVIDER=postgresql  DATABASE_URL=postgres://...neon...
+// All column types are portable across SQLite & PostgreSQL (no provider-specific types).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String?
+  passwordHash   String
+  avatarUrl      String?
+  role           String   @default("USER") // USER | ADMIN
+  emailVerified  Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  ffUid          String?
+  ffNickname     String?
+  // Referral system
+  referralCode   String   @unique
+  referredById   String?
+  referralRewardIssued Boolean @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orders         Order[]
+  registrations  TournamentRegistration[]
+  notifications  Notification[]
+  passwordResets PasswordReset[]
+  sessions       Session[]
+  payments       Payment[]
+  wallet         Wallet?
+  walletTxns     WalletTransaction[]
+  prizeClaims    PrizeClaim[]
+  referralsMade  Referral[]       @relation("Referrer")
+  referralOf     Referral?        @relation("Referred")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  description   String?
+  category      String   // DIAMONDS | WEEKLY_MEMBERSHIP | MONTHLY_MEMBERSHIP
+  diamonds      Int?
+  bonusDiamonds Int      @default(0)
+  price         Float
+  originalPrice Float?
+  imageUrl      String
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders   Order[]
+  payments Payment[]
+}
+
+model Order {
+  id            String   @id @default(cuid())
+  orderNumber   String   @unique
+  userId        String
+  productId     String
+  ffUid         String
+  ffNickname    String
+  status        String   @default("PENDING") // PENDING | PAID | PROCESSING | COMPLETED | CANCELLED
+  amount        Float
+  discount      Float    @default(0)
+  finalAmount   Float
+  paymentMethod String?
+  paymentId     String?
+  notes         String?
+  couponCode    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Tournament {
+  id              String   @id @default(cuid())
+  slug            String   @unique
+  title           String
+  type            String   // DAILY | WEEKLY | MONTHLY
+  bannerUrl       String
+  description     String?
+  startDateTime   DateTime
+  endDateTime     DateTime?
+  entryFee        Float    @default(0)
+  prizePool       Float
+  totalSlots      Int
+  registeredCount Int      @default(0)
+  roomId          String?
+  roomPassword    String?
+  status          String   @default("UPCOMING") // UPCOMING | REGISTRATION_OPEN | REGISTRATION_CLOSED | LIVE | COMPLETED | CANCELLED
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  registrations TournamentRegistration[]
+  rewards       TournamentReward[]
+  payments      Payment[]
+  prizeClaims   PrizeClaim[]
+
+  @@index([type])
+  @@index([status])
+}
+
+model TournamentRegistration {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String
+  ffUid        String
+  ffNickname   String
+  teamName     String?
+  isSolo       Boolean  @default(true)
+  // PENDING_APPROVAL = awaiting admin payment verification
+  // APPROVED = admin verified payment, user is registered
+  // REJECTED = admin rejected payment
+  // CHECKED_IN / ELIMINATED / WON / DISQUALIFIED = post-registration status
+  status       String   @default("PENDING_APPROVAL")
+  adminRemark  String?
+  paymentId    String?  // link to Payment row
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId])
+  @@index([status])
+}
+
+model TournamentReward {
+  id               String   @id @default(cuid())
+  tournamentId     String
+  position         Int // 1, 2, 3
+  prizeAmount      Float
+  prizeDescription String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, position])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String?
+  type      String   // ORDER_CONFIRMED | ORDER_COMPLETED | TOURNAMENT_REGISTERED | TOURNAMENT_STARTING | WINNER_ANNOUNCEMENT | ROOM_PUBLISHED | PAYMENT_RECEIVED | PAYMENT_APPROVED | PAYMENT_REJECTED | TOURNAMENT_REG_APPROVED | TOURNAMENT_REG_REJECTED | GENERAL
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  isGlobal  Boolean  @default(false)
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model Coupon {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  description   String?
+  discountType  String    // PERCENTAGE | FIXED
+  discountValue Float
+  minAmount     Float     @default(0)
+  maxDiscount   Float?
+  usageLimit    Int?
+  usedCount     Int       @default(0)
+  isActive      Boolean   @default(true)
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+model Transaction {
+  id            String   @id @default(cuid())
+  orderId       String?
+  userId        String?
+  provider      String
+  providerTxnId String?
+  amount        Float
+  currency      String   @default("PKR")
+  status        String   // INITIATED | PENDING | SUCCESS | FAILED | REFUNDED | PARTIALLY_REFUNDED
+  type          String   // PAYMENT | REFUND
+  description   String?
+  metadata      String?
+  refundReason  String?
+  refundedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([userId])
+}
+
+// EasyPaisa / manual payment submissions (screenshot + transaction id)
+model Payment {
+  id             String   @id @default(cuid())
+  userId         String
+  packageId      String?  // null for tournament registration payments
+  tournamentId   String?  // null for package purchases
+  orderId        String?  // optional link to legacy Order table (kept for back-compat)
+  amount         Float
+  currency       String   @default("PKR")
+  transactionId  String   // user-submitted EasyPaisa TID
+  screenshot     String   // base64 data URI of payment screenshot
+  paymentMethod  String   @default("EASYPAISA")
+  status         String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  adminRemark    String?
+  createdAt      DateTime @default(now())
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package    Product?    @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  tournament Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([tournamentId])
+  @@index([packageId])
+}
+
+model SiteSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  rating    Int
+  comment   String
+  avatarUrl String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// Wallet — per-user balance (PKR). Used only as discount at checkout.
+// ============================================================
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@index([userId])
+}
+
+// ============================================================
+// WalletTransaction — every credit / debit on a wallet.
+// type:        CREDIT | DEBIT
+// reason:      REFERRAL_REWARD | PRIZE_REWARD | PURCHASE_DISCOUNT | ADMIN_ADJUST | REFUND
+// ============================================================
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  userId      String
+  type        String   // CREDIT | DEBIT
+  reason      String   // REFERRAL_REWARD | PRIZE_REWARD | PURCHASE_DISCOUNT | ADMIN_ADJUST | REFUND
+  amount      Float
+  balanceBefore Float
+  balanceAfter  Float
+  description String?
+  referenceId String?  // orderId | prizeClaimId | referralId
+  createdAt   DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([reason])
+}
+
+// ============================================================
+// PrizeClaim — winner submits UID + IGN + screenshot to claim prize.
+// status: PENDING | APPROVED | REJECTED
+// rewardType: DIAMONDS | WALLET
+// ============================================================
+model PrizeClaim {
+  id              String   @id @default(cuid())
+  userId          String
+  tournamentId    String
+  registrationId  String?
+  ffUid           String
+  ffNickname      String
+  screenshot      String   // base64 data URI
+  note            String?
+  status          String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  rewardType      String?  // DIAMONDS | WALLET (set by admin on approval)
+  rewardAmount    Float?
+  adminRemark     String?
+  createdAt       DateTime @default(now())
+  reviewedAt      DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tournamentId])
+  @@index([status])
+}
+
+// ============================================================
+// Referral — tracks who referred whom, and whether reward was paid.
+// status: PENDING (referred user hasn't transacted yet) | REWARDED (Rs.5 paid) | BLOCKED (self-ref / fraud)
+// ============================================================
+model Referral {
+  id              String   @id @default(cuid())
+  referrerId      String
+  referredId      String
+  referralCode    String
+  status          String   @default("PENDING") // PENDING | REWARDED | BLOCKED
+  rewardAmount    Float    @default(5)
+  triggeredByType String?  // ORDER | TOURNAMENT_REG
+  triggeredById   String?
+  createdAt       DateTime @default(now())
+  rewardedAt      DateTime?
+
+  referrer User @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referred User @relation("Referred", fields: [referredId], references: [id], onDelete: Cascade)
+
+  @@unique([referredId])
+  @@index([referrerId])
+  @@index([status])
+}

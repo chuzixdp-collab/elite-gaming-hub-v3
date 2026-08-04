@@ -1,0 +1,51 @@
+# ============================================================
+# Elite Gaming Hub — Netlify deployment configuration
+# ============================================================
+# Stack: Next.js 16 (App Router) + React 19 + TypeScript +
+#        Tailwind 4 + Prisma + Neon PostgreSQL + EasyPaisa
+# ============================================================
+
+[build]
+# Build steps (each step is non-blocking where possible):
+# 1. Swap Prisma schema to PostgreSQL if DATABASE_PROVIDER=postgresql
+# 2. Install dependencies (npm — guaranteed available on Netlify)
+# 3. Regenerate Prisma client
+# 4. Push schema to Neon (non-blocking — won't fail build if DB is unreachable)
+# 5. Seed database (non-blocking)
+# 6. Build Next.js
+command = "bash scripts/swap-prisma-provider.sh && npm install --legacy-peer-deps && npx prisma generate && (npx prisma db push --accept-data-loss || echo 'db push skipped') && (npx -y tsx prisma/seed.ts || echo 'db seed skipped') && npm run build"
+publish = ".next"
+
+[build.environment]
+NODE_VERSION = "20"
+NPM_FLAGS = "--legacy-peer-deps"
+
+# ============================================================
+# Required environment variables (set in Netlify UI)
+# ============================================================
+# DATABASE_PROVIDER = "postgresql"
+# DATABASE_URL      = "postgres://user:pass@host/db?sslmode=require"
+# JWT_SECRET        = "your-32-char-secret"
+# NEXT_PUBLIC_APP_NAME = "Elite Gaming Hub"
+
+# ============================================================
+# Next.js plugin — handles SSR / API routes via Netlify Functions
+# ============================================================
+[[plugins]]
+package = "@netlify/plugin-nextjs"
+
+# ============================================================
+# Headers — security hardening
+# ============================================================
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
